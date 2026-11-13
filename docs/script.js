@@ -212,7 +212,7 @@
       });
       sel.disabled = false;
       // Auto-select platform default
-      const defaults = { 'ggpoker': 'sng_0.25_6max', '888poker': 'sng_0.50_3max' };
+      const defaults = { 'ggpoker': 'sng_0.25_3max', '888poker': 'sng_0.50_3max' };
       const defaultKey = defaults[platformKey];
       if (defaultKey && sel.querySelector(`option[value="${defaultKey}"]`)) {
         sel.value = defaultKey;
@@ -246,10 +246,12 @@
       if (pSel) { pSel.innerHTML = '<option value="">– Válassz helyezést –</option>'; pSel.disabled = true; }
       sngUpdatePreview(null, null, null);
       // Auto-open: focus + try showPicker
-      setTimeout(() => {
+      const openPicker = () => {
         try { sel.focus(); } catch(e) {}
         if (typeof sel.showPicker === 'function') { try { sel.showPicker(); } catch(e) {} }
-      }, 80);
+      };
+      openPicker();
+      setTimeout(openPicker, 50);
     }
 
     function sngPopulatePositions() {
@@ -281,10 +283,12 @@
       });
       sel.disabled = false;
       // Auto-open: focus + try showPicker
-      setTimeout(() => {
+      const openPicker = () => {
         try { sel.focus(); } catch(e) {}
         if (typeof sel.showPicker === 'function') { try { sel.showPicker(); } catch(e) {} }
-      }, 80);
+      };
+      openPicker();
+      setTimeout(openPicker, 50);
     }
 
     function sngUpdatePreview(platformKey, tournamentKey, multiplierKey, positionKey) {
@@ -424,7 +428,12 @@
 
       // Re-focus multiplier for next entry
       setTimeout(() => {
-        try { if (mSel) mSel.focus(); } catch(e) {}
+        try {
+          if (mSel) {
+            mSel.focus();
+            if (typeof mSel.showPicker === 'function') { try { mSel.showPicker(); } catch(e) {} }
+          }
+        } catch(e) {}
       }, 120);
     }
 
@@ -1562,6 +1571,14 @@
         const t=tab.getAttribute('data-tab'); state.view=t;
         if(t==='888'||t==='gg'){state.room=t;const gt=document.getElementById('gameType');if(gt&&!editId)gt.value=t==='gg'?'SNG':'MTT';}
         saveState(state); render();
+        if(t==='888'||t==='gg'){
+          const sngPlatSel = document.getElementById('sng-platform');
+          if (sngPlatSel) {
+            const roomToPlat = { 'gg': 'ggpoker', '888': '888poker' };
+            sngPlatSel.value = roomToPlat[t] || 'ggpoker';
+          }
+          sngPopulateTournaments();
+        }
       });
     });
 
