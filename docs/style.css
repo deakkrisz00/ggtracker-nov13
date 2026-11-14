@@ -369,3 +369,23 @@
     .archive-games .stats-table { min-width:560px; }
     .archive-games .stats-table th:last-child,.archive-games .stats-table td:last-child { text-align:right; }
     .archive-games .stats-table td.num { text-align:right;font-variant-numeric:tabular-nums; }
+
+    /* Saját gyorsválasztó panel (szorzó / helyezés) */
+    #sng-multiplier, #sng-position { pointer-events:none; }
+    .sng-field { cursor:pointer; }
+    .qs-backdrop { position:fixed;inset:0;z-index:1000;background:rgba(2,6,23,0.7);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-end;justify-content:center;overscroll-behavior:contain; }
+    .qs-sheet { width:100%;max-width:520px;max-height:75vh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:linear-gradient(180deg,rgba(15,23,42,0.99),rgba(2,6,23,1));border:1px solid rgba(234,179,8,0.45);border-bottom:none;border-radius:18px 18px 0 0;padding:14px 14px calc(16px + env(safe-area-inset-bottom));animation:qs-up 0.18s ease-out; }
+    @keyframes qs-up { from { transform:translateY(24px);opacity:0; } to { transform:none;opacity:1; } }
+    .qs-head { display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px; }
+    .qs-title { font-size:15px;font-weight:700;color:var(--text); }
+    .qs-sub { font-size:11px;color:var(--muted);margin-top:2px; }
+    .qs-close { border-radius:999px;border:1px solid rgba(148,163,184,0.7);padding:6px 12px;font-size:12px;background:rgba(15,23,42,0.96);color:var(--muted);cursor:pointer;flex:0 0 auto; }
+    .qs-grid { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px; }
+    .qs-list { display:flex;flex-direction:column;gap:8px; }
+    .qs-item { border-radius:12px;border:1px solid rgba(234,179,8,0.45);background:rgba(15,23,42,0.95);color:var(--text);font-size:18px;font-weight:700;padding:16px 8px;cursor:pointer;touch-action:manipulation; }
+    .qs-item:active { transform:scale(0.97);background:rgba(234,179,8,0.18); }
+    .qs-item.qs-selected { border-color:#fde68a;box-shadow:0 0 0 2px rgba(234,179,8,0.3); }
+    .qs-list .qs-item { display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:15px;padding:14px 14px;text-align:left; }
+    .qs-item-extra { font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap; }
+    .qs-item-extra.qs-pos { color:#4ade80; }
+    .qs-item-extra.qs-neg { color:#fca5a5; }

@@ -1,59 +1,3 @@
-      (function() {
-        const originalConsole = window.console;
-        window.console = {
-          log: (...args) => { originalConsole.log(...args); window.parent.postMessage({ type: 'console', message: args.join(' ') }, '*'); },
-          error: (...args) => { originalConsole.error(...args); window.parent.postMessage({ type: 'console', message: 'Error: ' + args.join(' ') }, '*'); },
-          warn: (...args) => { originalConsole.warn(...args); window.parent.postMessage({ type: 'console', message: 'Warning: ' + args.join(' ') }, '*'); }
-        };
-        let requestId = 0;
-        let callbacksMap = new Map();
-        let streamControllers = new Map();
-        window.claude = { complete: (prompt) => new Promise((resolve, reject) => { const id = requestId++; callbacksMap.set(id, { resolve, reject }); window.parent.postMessage({ type: 'claudeComplete', id, prompt }, '*'); }) };
-        window.storage = {
-          get: (key, shared = false) => new Promise((resolve, reject) => { const id = requestId++; callbacksMap.set(id, { resolve, reject }); window.parent.postMessage({ type: 'storageGet', id, key, shared }, '*'); }),
-          set: (key, value, shared = false) => new Promise((resolve, reject) => { const id = requestId++; callbacksMap.set(id, { resolve, reject }); window.parent.postMessage({ type: 'storageSet', id, key, value, shared }, '*'); }),
-          delete: (key, shared = false) => new Promise((resolve, reject) => { const id = requestId++; callbacksMap.set(id, { resolve, reject }); window.parent.postMessage({ type: 'storageDelete', id, key, shared }, '*'); }),
-          list: (prefix, shared = false) => new Promise((resolve, reject) => { const id = requestId++; callbacksMap.set(id, { resolve, reject }); window.parent.postMessage({ type: 'storageList', id, prefix, shared }, '*'); })
-        };
-        let pendingBlobs = new Map();
-        URL.createObjectURL = (blob) => { const blobId = `blob-${Date.now()}-${Math.random()}`; pendingBlobs.set(blobId, blob); return `blob-request://${blobId}`; };
-        URL.revokeObjectURL = (url) => { const blobId = url.replace("blob-request://", ""); pendingBlobs.delete(blobId); };
-        const getBlobFromURL = (url) => { const blobId = url.replace("blob-request://", ""); return pendingBlobs.get(blobId); };
-        window.fetch = (url, init = {}) => new Promise((resolve, reject) => {
-          const id = requestId++;
-          const channelId = `fetch-${id}-${Date.now()}`;
-          callbacksMap.set(id, { resolve: (response) => {
-            const stream = new ReadableStream({ start(controller) { streamControllers.set(channelId, controller); }, cancel() { streamControllers.delete(channelId); } });
-            resolve(new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers }));
-          }, reject, channelId });
-          window.parent.postMessage({ type: 'proxyFetch', id, url, init, channelId }, '*');
-        });
-        window.addEventListener('message', async (event) => {
-          if (event.data.type === 'takeScreenshot') {
-            const rootElement = document.getElementById('artifacts-component-root-html');
-            if (!rootElement) { window.parent.postMessage({ type: 'screenshotError', error: new Error('Root element not found') }, '*'); return; }
-            try { const screenshot = await htmlToImage.toPng(rootElement, { imagePlaceholder: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAA1JREFUGFdjePDgwX8ACOQDoNsk0PMAAAAASUVORK5CYII=" }); window.parent.postMessage({ type: 'screenshotData', data: screenshot }, '*'); } catch (err) { window.parent.postMessage({ type: 'screenshotError', error: err instanceof Error ? err : new Error(String(err)) }, '*'); }
-          } else if (event.data.type === 'claudeComplete') { const cb = callbacksMap.get(event.data.id); if (event.data.error) cb.reject(new Error(event.data.error)); else cb.resolve(event.data.completion); callbacksMap.delete(event.data.id);
-          } else if (event.data.type === 'proxyFetchResponse') { const cb = callbacksMap.get(event.data.id); if (event.data.error) { cb.reject(new Error(event.data.error)); callbacksMap.delete(event.data.id); } else { cb.resolve({ status: event.data.status, statusText: event.data.statusText, headers: event.data.headers }); if (!event.data.body) callbacksMap.delete(event.data.id); }
-          } else if (event.data.type === 'proxyFetchStream') { const controller = streamControllers.get(event.data.channelId); if (controller) { if (event.data.error) { controller.error(new Error(event.data.error)); streamControllers.delete(event.data.channelId); } else if (event.data.done) { controller.close(); streamControllers.delete(event.data.channelId); const cb = Array.from(callbacksMap.entries()).find(([_, v]) => v.channelId === event.data.channelId); if (cb) callbacksMap.delete(cb[0]); } else if (event.data.chunk) controller.enqueue(new Uint8Array(event.data.chunk)); }
-          } else if (event.data.type === 'storageGet') { const cb = callbacksMap.get(event.data.id); if (event.data.error) cb.reject(new Error(event.data.error)); else cb.resolve(event.data.result); callbacksMap.delete(event.data.id);
-          } else if (event.data.type === 'storageSet') { const cb = callbacksMap.get(event.data.id); if (event.data.error) cb.reject(new Error(event.data.error)); else cb.resolve(event.data.result); callbacksMap.delete(event.data.id);
-          } else if (event.data.type === 'storageDelete') { const cb = callbacksMap.get(event.data.id); if (event.data.error) cb.reject(new Error(event.data.error)); else cb.resolve(event.data.result); callbacksMap.delete(event.data.id);
-          } else if (event.data.type === 'storageList') { const cb = callbacksMap.get(event.data.id); if (event.data.error) cb.reject(new Error(event.data.error)); else cb.resolve(event.data.result); callbacksMap.delete(event.data.id); }
-        });
-        window.addEventListener('click', (event) => {
-          const isEl = event.target instanceof HTMLElement; if (!isEl) return;
-          const linkEl = event.target.closest("a"); if (!linkEl || !linkEl.href) return;
-          event.preventDefault(); event.stopImmediatePropagation();
-          if (linkEl.href.startsWith("blob-request:")) { const blob = getBlobFromURL(linkEl.href); if (!blob) return; void blob.arrayBuffer().then((data) => { window.parent.postMessage({ type: "downloadFile", filename: linkEl.download, data, mimeType: blob.type || "application/octet-stream" }); });
-          } else if (linkEl.href.startsWith("data:")) { const [header, base64Data] = linkEl.href.split(","); const mimeMatch = header.match(/data:([^;]+)/); const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream"; const binaryString = atob(base64Data); const data = Uint8Array.from(binaryString, (c) => c.charCodeAt(0)).buffer; window.parent.postMessage({ type: "downloadFile", filename: linkEl.download, data, mimeType });
-          } else { let linkUrl; try { linkUrl = new URL(linkEl.href); } catch (error) { return; } if (linkUrl.hostname === window.location.hostname) return; window.parent.postMessage({ type: 'openExternal', href: linkEl.href }, '*'); }
-        });
-        const originalOpen = window.open;
-        window.open = function (url) { window.parent.postMessage({ type: "openExternal", href: url }, "*"); };
-        window.addEventListener('error', (event) => { window.parent.postMessage({ type: 'console', message: 'Uncaught Error: ' + event.message }, '*'); });
-      })();
-
     const PRESETS = {
       'mtt-freebuy-888':    { label:'MTT Freebuy (888) – $0',    name:'888 MTT Freebuy',   buyIn:'0',    players:'',  gameType:'MTT' },
       'freeroll-zilnic-888':{ label:'Freeroll Zilnic (888) – $0', name:'Freeroll Zilnic',   buyIn:'0',    players:'',  gameType:'MTT' },
@@ -203,14 +147,87 @@
       return sel ? sel.value : '';
     }
 
+    // ---- Saját gyorsválasztó panel (iOS-en a natív select programból nem nyitható érintés nélkül) ----
+    let quickSheetEl = null;
+    let quickSheetOpenedAt = 0;
+
+    function closeQuickSheet() {
+      if (quickSheetEl) { quickSheetEl.remove(); quickSheetEl = null; }
+    }
+
     function openPickerForSelect(sel) {
       if (!sel || sel.disabled) return;
-      try { sel.focus(); } catch(e) {}
-      if (typeof sel.showPicker === 'function') {
-        try { sel.showPicker(); return; } catch(e) {}
-      }
-      try { sel.click(); } catch(e) {}
+      if (state.view !== '888' && state.view !== 'gg') return;
+      const items = Array.from(sel.options).filter(o => o.value !== '');
+      if (!items.length) return;
+      closeQuickSheet();
+
+      const isPosition = sel.id === 'sng-position';
+      const selText = (id) => {
+        const el = document.getElementById(id);
+        return el && el.selectedIndex >= 0 && el.value ? el.options[el.selectedIndex].textContent : '';
+      };
+      const subtitle = [selText('sng-platform'), selText('sng-tournament'), isPosition ? selText('sng-multiplier') : '']
+        .filter(Boolean).join(' · ');
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'qs-backdrop';
+      const sheet = document.createElement('div');
+      sheet.className = 'qs-sheet';
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-modal', 'true');
+
+      const head = document.createElement('div');
+      head.className = 'qs-head';
+      const titleWrap = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'qs-title';
+      title.textContent = isPosition ? '🏁 Helyezés' : '✖️ Szorzó';
+      const sub = document.createElement('div');
+      sub.className = 'qs-sub';
+      sub.textContent = subtitle;
+      titleWrap.appendChild(title); titleWrap.appendChild(sub);
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'qs-close';
+      closeBtn.textContent = 'Bezárás';
+      closeBtn.addEventListener('click', closeQuickSheet);
+      head.appendChild(titleWrap); head.appendChild(closeBtn);
+
+      const grid = document.createElement('div');
+      grid.className = isPosition ? 'qs-list' : 'qs-grid';
+      items.forEach(o => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'qs-item' + (o.value === sel.value ? ' qs-selected' : '');
+        if (isPosition) {
+          const parts = o.textContent.split(' → ');
+          const l = document.createElement('span'); l.className = 'qs-item-main'; l.textContent = parts[0];
+          const r = document.createElement('span');
+          r.className = 'qs-item-extra' + (/\(\+/.test(parts[1] || '') ? ' qs-pos' : /\(-/.test(parts[1] || '') ? ' qs-neg' : '');
+          r.textContent = parts[1] || '';
+          btn.appendChild(l); btn.appendChild(r);
+        } else {
+          btn.textContent = o.textContent;
+        }
+        btn.addEventListener('click', () => {
+          if (Date.now() - quickSheetOpenedAt < 250) return; // véletlen dupla érintés ellen
+          const val = o.value;
+          closeQuickSheet();
+          sel.value = val;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        grid.appendChild(btn);
+      });
+
+      sheet.appendChild(head); sheet.appendChild(grid);
+      backdrop.appendChild(sheet);
+      backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeQuickSheet(); });
+      document.body.appendChild(backdrop);
+      quickSheetEl = backdrop;
+      quickSheetOpenedAt = Date.now();
     }
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeQuickSheet(); });
 
     function sngPopulateTournaments(autoOpen = true) {
       const platformKey = sngGetPlatformKey();
@@ -266,7 +283,6 @@
       sngUpdatePreview(null, null, null);
       if (autoOpen) {
         openPickerForSelect(sel);
-        setTimeout(() => openPickerForSelect(sel), 60);
       }
     }
 
@@ -300,7 +316,6 @@
       sel.disabled = false;
       if (autoOpen) {
         openPickerForSelect(sel);
-        setTimeout(() => openPickerForSelect(sel), 60);
       }
     }
 
@@ -439,62 +454,28 @@
       if (state.room !== targetRoom) { state.room = targetRoom; state.view = targetRoom; }
       render();
 
-      // Re-focus multiplier for next entry
-      setTimeout(() => {
-        try {
-          if (mSel) {
-            mSel.focus();
-            if (typeof mSel.showPicker === 'function') { try { mSel.showPicker(); } catch(e) {} }
-          }
-        } catch(e) {}
-      }, 120);
+      // Következő bevitelhez azonnal újra a szorzó-választó
+      setTimeout(() => { if (mSel) openPickerForSelect(mSel); }, 120);
     }
 
     function tryInitialPickerOpen() {
       if (state.view !== '888' && state.view !== 'gg') return;
+      if (quickSheetEl) return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+      const sm = document.getElementById('session-modal-backdrop');
+      if (sm && sm.classList.contains('open')) return;
       const mSel = document.getElementById('sng-multiplier');
-      if (mSel && !mSel.disabled && !mSel.value) {
-        openPickerForSelect(mSel);
-      }
+      const pSel = document.getElementById('sng-position');
+      if (mSel && !mSel.disabled && !mSel.value) openPickerForSelect(mSel);
+      else if (pSel && !pSel.disabled && !pSel.value) openPickerForSelect(pSel);
     }
 
-    function handleFirstUserInteraction(e) {
-      if (state.view !== '888' && state.view !== 'gg') return;
-      const mSel = document.getElementById('sng-multiplier');
-      if (!mSel || mSel.disabled || mSel.value) return;
-
-      // Don't intercept if user tapped to navigate away to another tab
-      const tab = e.target && e.target.closest && e.target.closest('.tab');
-      if (tab) {
-        const tabName = tab.getAttribute('data-tab');
-        if (tabName !== '888' && tabName !== 'gg') return;
-      }
-
-      // Don't intercept interactive form inputs, textarea, or buttons outside sng-quick-panel
-      if (e.target && e.target.closest) {
-        if (e.target.closest('input') || e.target.closest('textarea')) return;
-        if (e.target.closest('button') && !e.target.closest('#sng-quick-panel') && !e.target.closest('.tab-888') && !e.target.closest('.tab-gg')) return;
-        if (e.target.closest('select')) return; // Native select click will open itself
-      }
-
-      // Any other tap (panel, background, cards, header, tables, active room tab):
-      openPickerForSelect(mSel);
-    }
-
-    // Active touchend and click handlers (WebKit requires active user activation)
-    document.addEventListener('touchend', handleFirstUserInteraction);
-    document.addEventListener('click', handleFirstUserInteraction);
-
-    // App focus / tab visibility change (e.g. switching back from 888 or GG app)
-    ['focus', 'visibilitychange'].forEach(evt => {
-      window.addEventListener(evt, () => {
-        if (document.visibilityState === 'visible') {
-          tryInitialPickerOpen();
-          setTimeout(tryInitialPickerOpen, 60);
-          setTimeout(tryInitialPickerOpen, 180);
-        }
-      });
+    // Az appba való (újra)belépéskor is jelenjen meg
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') setTimeout(tryInitialPickerOpen, 150);
     });
+    window.addEventListener('pageshow', () => setTimeout(tryInitialPickerOpen, 150));
 
     let sngPanelInitialized = false;
     function initSngPanel() {
@@ -509,10 +490,10 @@
       const undoBtn = document.getElementById('sng-undo-btn');
       if (undoBtn) undoBtn.addEventListener('click', undoLastQuickEntry);
 
-      // Sync platform dropdown with active room on init and auto-populate default
+      // Sync platform dropdown with active room on init
       const roomToPlat = { 'gg': 'ggpoker', '888': '888poker' };
       platformSel.value = roomToPlat[state.room] || '888poker';
-      sngPopulateTournaments(true);
+      sngPopulateTournaments(false);
 
       platformSel.addEventListener('change', () => {
         sngPopulateTournaments(true);
@@ -538,22 +519,26 @@
         });
       }
 
-      // Quick panel click opens multiplier dropdown
+      // A szorzó/helyezés mezőre érintve a saját panel nyílik (a natív select nem reagál)
+      [multiplierSel, positionSel].forEach(el => {
+        if (!el) return;
+        const wrap = el.closest('.sng-field');
+        if (wrap) wrap.addEventListener('click', () => openPickerForSelect(el));
+      });
+
+      // Quick panel click opens multiplier picker if idle
       const quickPanel = document.getElementById('sng-quick-panel');
       if (quickPanel) {
         quickPanel.addEventListener('click', (e) => {
-          if (!e.target.closest('select') && !e.target.closest('button')) {
+          if (e.target === quickPanel || e.target.closest('.sng-panel-header') || e.target.classList.contains('sng-dropdown-row')) {
             const mSel = document.getElementById('sng-multiplier');
             if (mSel && !mSel.disabled) openPickerForSelect(mSel);
           }
         });
       }
 
-      // Initial auto-open attempts on load
-      tryInitialPickerOpen();
-      setTimeout(tryInitialPickerOpen, 60);
-      setTimeout(tryInitialPickerOpen, 180);
-      setTimeout(tryInitialPickerOpen, 400);
+      // Initial auto-open attempt
+      setTimeout(tryInitialPickerOpen, 120);
     }
     document.addEventListener('DOMContentLoaded', () => {
       const qp = document.getElementById('quick-preset');
@@ -1644,6 +1629,7 @@
     document.querySelectorAll('.tab').forEach(tab=>{
       tab.addEventListener('click',()=>{
         const t=tab.getAttribute('data-tab'); state.view=t;
+        closeQuickSheet();
         if(t==='888'||t==='gg'){state.room=t;const gt=document.getElementById('gameType');if(gt&&!editId)gt.value=t==='gg'?'SNG':'MTT';}
         saveState(state); render();
         if(t==='888'||t==='gg'){
@@ -1663,11 +1649,6 @@
       reader.onload=(ev)=>{
         try {
           const parsed=JSON.parse(ev.target.result);
-          // Ha egyedi session fájl vagy tiszta archívum export került kiválasztásra
-          if (parsed && typeof parsed === 'object' && !parsed.baseBalances && (parsed.startBalances || (Array.isArray(parsed.archive) && !parsed.games) || (Array.isArray(parsed) && parsed[0]?.games))) {
-            importArchiveJson(parsed);
-            return;
-          }
           const imported=validateImportedState(parsed);
           const replace=confirm('OK = Lecserélés a fájlban lévő adatokra\nMégse = Egyesítés a meglévő adatokkal');
           if(replace){
@@ -1698,34 +1679,71 @@
       state.games[state.room].push(createGameEntry(state.room,data)); saveState(state); clearEditMode(); render();
     });
 
-    // Okos fájlmentés: iframe (Claude) → postMessage, PWA/standalone → Web Share API, fallback → data URI
+    // Okos fájlmentés: Claude előnézet → postMessage, telefon/PWA → megosztás menü (Fájlokba mentés),
+    // ha az sem megy → ablak a tartalommal (másolás / letöltés)
     function saveFileToDevice(filename, blob) {
       const isEmbedded = window.parent && window.parent !== window;
       if (isEmbedded) {
         blob.arrayBuffer().then(data => {
-          window.parent.postMessage({ type:'downloadFile', filename, data, mimeType: blob.type || 'application/octet-stream' });
+          window.parent.postMessage({ type:'downloadFile', filename, data, mimeType: blob.type || 'application/octet-stream' }, '*');
         });
         return;
       }
-      // PWA / Safari standalone – Web Share API (fájlmegosztás)
       if (typeof navigator.share === 'function') {
-        const file = new File([blob], filename, { type: blob.type });
-        const canShare = typeof navigator.canShare === 'function' ? navigator.canShare({ files:[file] }) : true;
-        if (canShare) {
-          navigator.share({ files:[file], title: filename }).catch(() => fallbackSave(filename, blob));
+        // Egyes iOS-verziók a json típust nem engedik megosztani, ilyenkor text/plain típussal próbáljuk
+        const types = [blob.type, 'text/plain'];
+        for (const t of types) {
+          let file;
+          try { file = new File([blob], filename, { type: t }); } catch (e) { continue; }
+          let ok = true;
+          try { ok = typeof navigator.canShare === 'function' ? navigator.canShare({ files:[file] }) : true; } catch (e) { ok = false; }
+          if (!ok) continue;
+          navigator.share({ files:[file], title: filename }).catch(err => {
+            if (err && err.name === 'AbortError') return; // a felhasználó bezárta a menüt
+            showSaveFallback(filename, blob);
+          });
           return;
         }
       }
-      fallbackSave(filename, blob);
+      showSaveFallback(filename, blob);
     }
-    function fallbackSave(filename, blob) {
+
+    function showSaveFallback(filename, blob) {
       const reader = new FileReader();
       reader.onload = () => {
-        const a = document.createElement('a');
-        a.href = reader.result; a.download = filename;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        const text = String(reader.result);
+        const old = document.getElementById('save-fallback');
+        if (old) old.remove();
+        const wrap = document.createElement('div');
+        wrap.id = 'save-fallback';
+        wrap.className = 'session-modal-backdrop open';
+        wrap.style.zIndex = '1100';
+        wrap.innerHTML =
+          '<div class="session-modal" role="dialog" aria-modal="true">'
+          + '<div class="note-viewer-header"><div class="session-modal-title">💾 ' + escHtml(filename) + '</div>'
+          + '<button class="note-viewer-close" type="button" data-sf="close">Bezárás</button></div>'
+          + '<div class="summary-note" style="margin:0 0 8px;">A fájl közvetlen mentése ezen az eszközön nem sikerült. Töltsd le, vagy másold ki a tartalmat és mentsd el (pl. Jegyzetekbe).</div>'
+          + '<textarea readonly style="width:100%;height:140px;border-radius:8px;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.95);color:#e5e7eb;font-size:11px;padding:8px;"></textarea>'
+          + '<div class="session-modal-actions">'
+          + '<a class="note-viewer-close" data-sf="download" style="text-decoration:none;display:inline-flex;align-items:center;">⬇️ Letöltés</a>'
+          + '<button class="primary" type="button" data-sf="copy">📋 Másolás</button></div></div>';
+        const ta = wrap.querySelector('textarea');
+        ta.value = text;
+        const dl = wrap.querySelector('[data-sf="download"]');
+        dl.setAttribute('download', filename);
+        dl.setAttribute('href', 'data:' + (blob.type || 'application/json') + ';charset=utf-8,' + encodeURIComponent(text));
+        wrap.addEventListener('click', (e) => {
+          if (e.target === wrap || e.target.closest('[data-sf="close"]')) { wrap.remove(); return; }
+          const copy = e.target.closest('[data-sf="copy"]');
+          if (!copy) return;
+          const done = () => { copy.textContent = '✅ Kimásolva'; };
+          const legacy = () => { ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); try { if (document.execCommand('copy')) done(); } catch (err) {} };
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, legacy);
+          else legacy();
+        });
+        document.body.appendChild(wrap);
       };
-      reader.readAsDataURL(blob);
+      reader.readAsText(blob);
     }
 
     document.querySelectorAll('.btn-export-json').forEach(button => button.addEventListener('click',()=>{
@@ -2003,151 +2021,6 @@
         + body + '</tbody></table></div>';
     }
 
-    function exportArchiveSession(sid) {
-      const sess = (state.archive || []).find(x => x.id === sid);
-      if (!sess) return;
-      const rawName = sess.name || (sess.startDate ? 'session_' + sess.startDate : 'session');
-      const safeName = rawName.replace(/[^a-zA-Z0-9_\u00C0-\u017F-]/g, '_');
-      const filename = `${safeName}_${sess.id.slice(-6)}.json`;
-      const blob = new Blob([JSON.stringify(sess, null, 2)], { type: 'application/json' });
-      saveFileToDevice(filename, blob);
-      showAppToast(`💾 <strong>Session elmentve:</strong> ${escHtml(filename)}`);
-    }
-
-    function exportAllArchive() {
-      const archive = Array.isArray(state.archive) ? state.archive : [];
-      if (!archive.length) {
-        alert('Még nincs archivált session, amit el lehetne menteni.');
-        return;
-      }
-      const filename = `poker-archive-all-${getLocalDateString()}.json`;
-      const blob = new Blob([JSON.stringify({ version: 'archive-v1', exportedAt: new Date().toISOString(), sessionsCount: archive.length, archive }, null, 2)], { type: 'application/json' });
-      saveFileToDevice(filename, blob);
-      showAppToast(`💾 <strong>Archívum elmentve:</strong> ${archive.length} session`);
-    }
-
-    function restoreArchiveSession(sid) {
-      const sess = (state.archive || []).find(x => x.id === sid);
-      if (!sess) return;
-
-      const g888 = sess.games?.['888'] || [];
-      const gGg  = sess.games?.['gg'] || [];
-      const totalGames = g888.length + gGg.length;
-      const activeCount = (state.games['888']?.length || 0) + (state.games['gg']?.length || 0);
-
-      const msg = activeCount > 0
-        ? `Figyelem!\n\nAz aktuális munkamenetben jelenleg ${activeCount} db verseny van rögzítve.\n\nHa visszatöltöd ezt az archivált sessiont (${totalGames} db verseny), a jelenlegi mentetlen játékok felülíródnak!\n\nBiztosan folytatod a visszatöltést?`
-        : `Biztosan visszatöltöd ezt a sessiont aktív munkamenetté?\n\n• Név / Időszak: ${sess.name || '-'} (${sess.startDate || '-'} → ${sess.endDate || '-'})\n• Versenyek száma: ${totalGames} db\n• Kezdő egyenlegek visszaállítása: 888 ($${sess.startBalances?.['888'] ?? 0}), GG ($${sess.startBalances?.['gg'] ?? 0})\n\nKattints az OK gombra a visszatöltéshez!`;
-
-      if (!confirm(msg)) return;
-
-      state.games = {
-        '888': JSON.parse(JSON.stringify(g888)),
-        'gg':  JSON.parse(JSON.stringify(gGg))
-      };
-      if (sess.startBalances) {
-        state.baseBalances = {
-          '888': +(Number(sess.startBalances['888']) || 0).toFixed(2),
-          'gg':  +(Number(sess.startBalances['gg']) || 0).toFixed(2)
-        };
-      }
-      state.room = g888.length >= gGg.length ? '888' : 'gg';
-      state.view = state.room;
-      saveState(state);
-      render();
-      showAppToast(`↩️ <strong>Session visszatöltve aktívvá!</strong> (${totalGames} verseny)`);
-    }
-
-    function importArchiveJson(parsed) {
-      if (!parsed || typeof parsed !== 'object') throw new Error('Érvénytelen JSON fájl.');
-
-      // Több sessionből álló archívum importálása
-      let sessions = null;
-      if (Array.isArray(parsed)) {
-        sessions = parsed;
-      } else if (Array.isArray(parsed.archive)) {
-        sessions = parsed.archive;
-      }
-
-      if (sessions) {
-        if (!sessions.length) throw new Error('A fájl nem tartalmaz archivált sessionöket.');
-        if (!Array.isArray(state.archive)) state.archive = [];
-        let addedCount = 0;
-        const existingIds = new Set(state.archive.map(s => s && s.id));
-        sessions.forEach(s => {
-          if (!s || typeof s !== 'object') return;
-          if (!s.id || existingIds.has(s.id)) {
-            s.id = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-          }
-          existingIds.add(s.id);
-          state.archive.unshift(s);
-          addedCount++;
-        });
-        saveState(state);
-        renderArchive();
-        showAppToast(`✅ <strong>${addedCount} db session hozzáadva az archívumhoz!</strong>`);
-        return;
-      }
-
-      // Egyedi session importálása
-      if (parsed.games && (Array.isArray(parsed.games['888']) || Array.isArray(parsed.games['gg']))) {
-        const g888 = parsed.games['888'] || [];
-        const gGg  = parsed.games['gg'] || [];
-        const totalG = g888.length + gGg.length;
-        const sessName = parsed.name || parsed.startDate || 'Betöltött session';
-
-        const choice = confirm(
-          `Beolvasva: "${sessName}" (${totalG} verseny).\n\n` +
-          `Hová szeretnéd betölteni?\n\n` +
-          `OK = Hozzáadás az Archívumhoz (megmarad a listában)\n` +
-          `Mégse = Visszaállítás AKTÍV sessionné (a jelenlegi játékok helyére)`
-        );
-
-        if (choice) {
-          if (!Array.isArray(state.archive)) state.archive = [];
-          const sessionObj = {
-            id: parsed.id || ('s_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
-            name: parsed.name || '',
-            savedAt: parsed.savedAt || new Date().toISOString(),
-            startDate: parsed.startDate || (g888[0]?.date || gGg[0]?.date || getLocalDateString()),
-            endDate: parsed.endDate || (g888[g888.length-1]?.date || gGg[gGg.length-1]?.date || getLocalDateString()),
-            startBalances: parsed.startBalances || { '888': DEFAULT_BALANCE['888'], 'gg': DEFAULT_BALANCE['gg'] },
-            endBalances: parsed.endBalances || { '888': DEFAULT_BALANCE['888'], 'gg': DEFAULT_BALANCE['gg'] },
-            games: {
-              '888': g888,
-              'gg':  gGg
-            }
-          };
-          if (state.archive.some(x => x.id === sessionObj.id)) {
-            sessionObj.id = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-          }
-          state.archive.unshift(sessionObj);
-          saveState(state);
-          renderArchive();
-          showAppToast(`✅ <strong>Session hozzáadva az archívumhoz!</strong> (${totalG} verseny)`);
-        } else {
-          state.games = {
-            '888': JSON.parse(JSON.stringify(g888)),
-            'gg':  JSON.parse(JSON.stringify(gGg))
-          };
-          if (parsed.startBalances) {
-            state.baseBalances = {
-              '888': +(Number(parsed.startBalances['888']) || 0).toFixed(2),
-              'gg':  +(Number(parsed.startBalances['gg']) || 0).toFixed(2)
-            };
-          }
-          state.room = g888.length >= gGg.length ? '888' : 'gg';
-          state.view = state.room;
-          saveState(state);
-          render();
-          showAppToast(`↩️ <strong>Session visszatöltve aktívvá!</strong> (${totalG} verseny)`);
-        }
-        return;
-      }
-
-      throw new Error('A JSON fájl nem ismerhető fel sem sessionként, sem archívumként.');
-    }
-
     function renderArchive() {
       const list = document.getElementById('archive-list');
       const note = document.getElementById('archive-total-note');
@@ -2184,9 +2057,8 @@
           + '</div><div class="archive-profit" style="color:' + profitColor(profit) + ';">' + signedMoney(profit) + '</div></div>'
           + '<div class="archive-rooms">' + roomBox('gg', sgg, '🃏') + roomBox('888', s888, '🎰') + '</div>'
           + '<div class="archive-actions">'
-          + '<button class="secondary" type="button" data-archive-toggle="' + escHtml(sess.id) + '">▶ Versenyek</button>'
-          + '<button class="secondary" type="button" data-archive-export="' + escHtml(sess.id) + '" title="Session mentése JSON fájlba">💾 JSON mentés</button>'
-          + '<button class="secondary" type="button" data-archive-restore="' + escHtml(sess.id) + '" title="Session visszatöltése aktív munkamenetté">↩️ Visszatöltés aktívvá</button>'
+          + '<button class="secondary" type="button" data-archive-toggle="' + escHtml(sess.id) + '">▶ Versenyek megtekintése</button>'
+          + '<button class="secondary" type="button" data-archive-export="' + escHtml(sess.id) + '">💾 JSON</button>'
           + '<button class="danger" type="button" data-archive-delete="' + escHtml(sess.id) + '">✕ Törlés</button>'
           + '</div>'
           + '<div class="archive-games-holder hidden"></div>'
@@ -2214,8 +2086,6 @@
       if (list) list.addEventListener('click', e => {
         const tgl = e.target.closest('[data-archive-toggle]');
         const del = e.target.closest('[data-archive-delete]');
-        const exp = e.target.closest('[data-archive-export]');
-        const res = e.target.closest('[data-archive-restore]');
         if (tgl) {
           const sid = tgl.getAttribute('data-archive-toggle');
           const card = tgl.closest('.archive-card');
@@ -2226,13 +2096,7 @@
             holder.innerHTML = sess ? renderArchiveGamesTable(sess) : '';
           }
           holder.classList.toggle('hidden', !opening);
-          tgl.textContent = (opening ? '▼ ' : '▶ ') + 'Versenyek';
-        } else if (exp) {
-          const sid = exp.getAttribute('data-archive-export');
-          exportArchiveSession(sid);
-        } else if (res) {
-          const sid = res.getAttribute('data-archive-restore');
-          restoreArchiveSession(sid);
+          tgl.textContent = (opening ? '▼ ' : '▶ ') + 'Versenyek megtekintése';
         } else if (del) {
           const sid = del.getAttribute('data-archive-delete');
           if (!confirm('Biztosan törlöd ezt az archivált sessiont? Ez nem vonható vissza.')) return;
@@ -2241,29 +2105,123 @@
           renderArchive();
         }
       });
+    });
 
-      const expAllBtn = document.getElementById('btn-export-all-archive');
-      if (expAllBtn) expAllBtn.addEventListener('click', exportAllArchive);
+    // =========================================================
+    // ARCHÍV SESSION – JSON mentés és visszatöltés
+    // =========================================================
+    function archiveFileSlug(sess) {
+      const base = sess.name || (sess.startDate ? (sess.startDate === sess.endDate ? sess.startDate : sess.startDate + '_' + sess.endDate) : 'session');
+      const slug = String(base).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+      return slug || 'session';
+    }
 
-      const importArchiveInput = document.getElementById('import-archive-json-input');
-      if (importArchiveInput) {
-        importArchiveInput.addEventListener('change', e => {
-          const file = e.target.files && e.target.files[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = ev => {
-            try {
-              const parsed = JSON.parse(ev.target.result);
-              importArchiveJson(parsed);
-            } catch (err) {
-              alert('Hiba a session JSON betöltésekor: ' + err.message);
-            } finally {
-              e.target.value = '';
-            }
-          };
-          reader.readAsText(file);
-        });
+    function normalizeImportedSession(raw, index) {
+      const label = (index + 1) + '. session';
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(label + ': nem érvényes objektum.');
+      if (!raw.games || typeof raw.games !== 'object') throw new Error(label + ': hiányzik a games rész.');
+      const games = { '888': [], 'gg': [] };
+      ['888', 'gg'].forEach(room => {
+        const src = raw.games[room] ?? [];
+        if (!Array.isArray(src)) throw new Error(label + ': a(z) ' + room + ' játéklista nem tömb.');
+        games[room] = src.map((g, i) => normalizeImportedGame(g, room, i));
+      });
+      const dates = [...games['888'], ...games['gg']].map(g => g.date).sort();
+      const okDate = d => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) ? d : null;
+      const bal = (obj, k) => { const n = Number(obj && obj[k]); return Number.isFinite(n) ? +n.toFixed(2) : 0; };
+      const savedOk = typeof raw.savedAt === 'string' && !isNaN(new Date(raw.savedAt).getTime());
+      return {
+        id: (typeof raw.id === 'string' && raw.id.trim()) ? raw.id.slice(0, 120) : 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        name: String(raw.name ?? '').trim().slice(0, 120),
+        savedAt: savedOk ? raw.savedAt : new Date().toISOString(),
+        startDate: okDate(raw.startDate) || dates[0] || null,
+        endDate: okDate(raw.endDate) || dates[dates.length - 1] || null,
+        startBalances: { '888': bal(raw.startBalances, '888'), 'gg': bal(raw.startBalances, 'gg') },
+        endBalances: { '888': bal(raw.endBalances, '888'), 'gg': bal(raw.endBalances, 'gg') },
+        games
+      };
+    }
+
+    function extractSessionsFromImport(parsed) {
+      let list = null;
+      if (Array.isArray(parsed)) list = parsed;
+      else if (parsed && typeof parsed === 'object') {
+        if (parsed.type === 'poker-tracker-session' && parsed.session) list = [parsed.session];
+        else if (parsed.type === 'poker-tracker-archive' && Array.isArray(parsed.sessions)) list = parsed.sessions;
+        else if (Array.isArray(parsed.archive)) list = parsed.archive;            // teljes biztonsági mentés
+        else if (parsed.games && typeof parsed.games === 'object' && (parsed.startBalances || parsed.endBalances)) list = [parsed]; // egyedi session
       }
+      if (!list || !list.length) throw new Error('A fájl nem tartalmaz archivált sessiont.');
+      return list;
+    }
+
+    function exportArchivedSession(sid) {
+      const sess = (state.archive || []).find(x => x && x.id === sid);
+      if (!sess) return;
+      const payload = { type: 'poker-tracker-session', version: 1, exportedAt: new Date().toISOString(), session: sess };
+      saveFileToDevice('poker-session-' + archiveFileSlug(sess) + '.json', new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    }
+
+    function exportWholeArchive() {
+      const archive = Array.isArray(state.archive) ? state.archive : [];
+      if (!archive.length) { alert('Még nincs archivált session.'); return; }
+      const payload = { type: 'poker-tracker-archive', version: 1, exportedAt: new Date().toISOString(), sessions: archive };
+      saveFileToDevice('poker-archive-' + getLocalDateString() + '.json', new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    }
+
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(new Error('A fájl nem olvasható.'));
+        r.readAsText(file);
+      });
+    }
+
+    async function importArchiveFiles(files) {
+      if (!Array.isArray(state.archive)) state.archive = [];
+      const known = new Set(state.archive.map(x => x && x.id));
+      let added = 0, skipped = 0;
+      const errors = [];
+      const fresh = [];
+      for (const file of files) {
+        try {
+          const parsed = JSON.parse(await readFileAsText(file));
+          const list = extractSessionsFromImport(parsed);
+          list.forEach((raw, i) => {
+            const sess = normalizeImportedSession(raw, i);
+            if (known.has(sess.id)) { skipped++; return; }
+            known.add(sess.id); fresh.push(sess); added++;
+          });
+        } catch (err) {
+          errors.push(file.name + ': ' + err.message);
+        }
+      }
+      if (fresh.length) {
+        state.archive = fresh.concat(state.archive).sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
+        saveState(state);
+        render();
+      }
+      let msg = '✅ <strong>' + added + ' session betöltve</strong>' + (skipped ? ' · ' + skipped + ' már megvolt' : '');
+      if (!added && !errors.length) msg = 'ℹ️ Nem történt változás · ' + skipped + ' session már megvolt';
+      showAppToast(msg);
+      if (errors.length) alert('Hiba a betöltéskor:\n' + errors.join('\n'));
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const exportAll = document.getElementById('btn-archive-export-all');
+      if (exportAll) exportAll.addEventListener('click', exportWholeArchive);
+      const input = document.getElementById('archive-import-input');
+      if (input) input.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        try { if (files.length) await importArchiveFiles(files); }
+        finally { e.target.value = ''; }
+      });
+      const list = document.getElementById('archive-list');
+      if (list) list.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-archive-export]');
+        if (btn) exportArchivedSession(btn.getAttribute('data-archive-export'));
+      });
     });
 
     function getLocalDateString(date=new Date()){
@@ -2274,5 +2232,3 @@
     setTodayDate();
     initSngPanel();
     render();
-    tryInitialPickerOpen();
-    setTimeout(tryInitialPickerOpen, 80);
