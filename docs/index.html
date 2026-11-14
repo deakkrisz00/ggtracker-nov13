@@ -72,7 +72,7 @@
     <link rel="apple-touch-icon" sizes="167x167" href="ptracker-icon.png">
     <title>Póker Tournament Tracker</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" href="style.css?v=20261114_04">
+        <link rel="stylesheet" href="style.css?v=20261114_05">
 </head>
 
 <body id="artifacts-component-root-html">
@@ -552,8 +552,13 @@
     </section>
     <section class="card-section" id="archive-layout" style="display:none;">
       <div class="card-header">
-        <div><h2>🗂️ Arhiválás és mentés</h2><small>Az aktuális session archiválása, majd új session indítása új kezdő egyenlegekkel.</small></div>
-        <button class="primary btn-save-session" type="button">🗂️ Session mentése</button>
+        <div><h2>🗂️ Archiválás és mentés</h2><small>Az aktuális session archiválása, mentése JSON-be és szükség esetén visszatöltése.</small></div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <button class="secondary" id="btn-export-all-archive" type="button" title="Az összes archivált session mentése JSON fájlba">💾 Archívum mentése</button>
+          <label for="import-archive-json-input" class="secondary" style="height:26px;cursor:pointer;display:inline-flex;align-items:center;" title="Session vagy archívum JSON fájl betöltése">📂 Session betöltése</label>
+          <input type="file" id="import-archive-json-input" accept="application/json,.json" style="position:absolute;opacity:0;width:1px;height:1px;overflow:hidden;pointer-events:none;">
+          <button class="primary btn-save-session" type="button">🗂️ Új session mentése</button>
+        </div>
       </div>
       <div class="summary-note" id="archive-total-note" style="margin:0 0 10px;"></div>
       <div id="archive-list" class="archive-list"></div>
@@ -607,6 +612,6 @@
     <button type="button" id="sng-undo-btn" class="sng-undo-btn hidden">Visszavonás</button>
   </div>
 
-  <script src="script.js?v=20261114_04"></script>
+  <script src="script.js?v=20261114_05"></script>
 </body>
 </html>

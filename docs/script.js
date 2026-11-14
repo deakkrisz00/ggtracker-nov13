@@ -1663,6 +1663,11 @@
       reader.onload=(ev)=>{
         try {
           const parsed=JSON.parse(ev.target.result);
+          // Ha egyedi session fájl vagy tiszta archívum export került kiválasztásra
+          if (parsed && typeof parsed === 'object' && !parsed.baseBalances && (parsed.startBalances || (Array.isArray(parsed.archive) && !parsed.games) || (Array.isArray(parsed) && parsed[0]?.games))) {
+            importArchiveJson(parsed);
+            return;
+          }
           const imported=validateImportedState(parsed);
           const replace=confirm('OK = Lecserélés a fájlban lévő adatokra\nMégse = Egyesítés a meglévő adatokkal');
           if(replace){
@@ -1998,6 +2003,151 @@
         + body + '</tbody></table></div>';
     }
 
+    function exportArchiveSession(sid) {
+      const sess = (state.archive || []).find(x => x.id === sid);
+      if (!sess) return;
+      const rawName = sess.name || (sess.startDate ? 'session_' + sess.startDate : 'session');
+      const safeName = rawName.replace(/[^a-zA-Z0-9_\u00C0-\u017F-]/g, '_');
+      const filename = `${safeName}_${sess.id.slice(-6)}.json`;
+      const blob = new Blob([JSON.stringify(sess, null, 2)], { type: 'application/json' });
+      saveFileToDevice(filename, blob);
+      showAppToast(`💾 <strong>Session elmentve:</strong> ${escHtml(filename)}`);
+    }
+
+    function exportAllArchive() {
+      const archive = Array.isArray(state.archive) ? state.archive : [];
+      if (!archive.length) {
+        alert('Még nincs archivált session, amit el lehetne menteni.');
+        return;
+      }
+      const filename = `poker-archive-all-${getLocalDateString()}.json`;
+      const blob = new Blob([JSON.stringify({ version: 'archive-v1', exportedAt: new Date().toISOString(), sessionsCount: archive.length, archive }, null, 2)], { type: 'application/json' });
+      saveFileToDevice(filename, blob);
+      showAppToast(`💾 <strong>Archívum elmentve:</strong> ${archive.length} session`);
+    }
+
+    function restoreArchiveSession(sid) {
+      const sess = (state.archive || []).find(x => x.id === sid);
+      if (!sess) return;
+
+      const g888 = sess.games?.['888'] || [];
+      const gGg  = sess.games?.['gg'] || [];
+      const totalGames = g888.length + gGg.length;
+      const activeCount = (state.games['888']?.length || 0) + (state.games['gg']?.length || 0);
+
+      const msg = activeCount > 0
+        ? `Figyelem!\n\nAz aktuális munkamenetben jelenleg ${activeCount} db verseny van rögzítve.\n\nHa visszatöltöd ezt az archivált sessiont (${totalGames} db verseny), a jelenlegi mentetlen játékok felülíródnak!\n\nBiztosan folytatod a visszatöltést?`
+        : `Biztosan visszatöltöd ezt a sessiont aktív munkamenetté?\n\n• Név / Időszak: ${sess.name || '-'} (${sess.startDate || '-'} → ${sess.endDate || '-'})\n• Versenyek száma: ${totalGames} db\n• Kezdő egyenlegek visszaállítása: 888 ($${sess.startBalances?.['888'] ?? 0}), GG ($${sess.startBalances?.['gg'] ?? 0})\n\nKattints az OK gombra a visszatöltéshez!`;
+
+      if (!confirm(msg)) return;
+
+      state.games = {
+        '888': JSON.parse(JSON.stringify(g888)),
+        'gg':  JSON.parse(JSON.stringify(gGg))
+      };
+      if (sess.startBalances) {
+        state.baseBalances = {
+          '888': +(Number(sess.startBalances['888']) || 0).toFixed(2),
+          'gg':  +(Number(sess.startBalances['gg']) || 0).toFixed(2)
+        };
+      }
+      state.room = g888.length >= gGg.length ? '888' : 'gg';
+      state.view = state.room;
+      saveState(state);
+      render();
+      showAppToast(`↩️ <strong>Session visszatöltve aktívvá!</strong> (${totalGames} verseny)`);
+    }
+
+    function importArchiveJson(parsed) {
+      if (!parsed || typeof parsed !== 'object') throw new Error('Érvénytelen JSON fájl.');
+
+      // Több sessionből álló archívum importálása
+      let sessions = null;
+      if (Array.isArray(parsed)) {
+        sessions = parsed;
+      } else if (Array.isArray(parsed.archive)) {
+        sessions = parsed.archive;
+      }
+
+      if (sessions) {
+        if (!sessions.length) throw new Error('A fájl nem tartalmaz archivált sessionöket.');
+        if (!Array.isArray(state.archive)) state.archive = [];
+        let addedCount = 0;
+        const existingIds = new Set(state.archive.map(s => s && s.id));
+        sessions.forEach(s => {
+          if (!s || typeof s !== 'object') return;
+          if (!s.id || existingIds.has(s.id)) {
+            s.id = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+          }
+          existingIds.add(s.id);
+          state.archive.unshift(s);
+          addedCount++;
+        });
+        saveState(state);
+        renderArchive();
+        showAppToast(`✅ <strong>${addedCount} db session hozzáadva az archívumhoz!</strong>`);
+        return;
+      }
+
+      // Egyedi session importálása
+      if (parsed.games && (Array.isArray(parsed.games['888']) || Array.isArray(parsed.games['gg']))) {
+        const g888 = parsed.games['888'] || [];
+        const gGg  = parsed.games['gg'] || [];
+        const totalG = g888.length + gGg.length;
+        const sessName = parsed.name || parsed.startDate || 'Betöltött session';
+
+        const choice = confirm(
+          `Beolvasva: "${sessName}" (${totalG} verseny).\n\n` +
+          `Hová szeretnéd betölteni?\n\n` +
+          `OK = Hozzáadás az Archívumhoz (megmarad a listában)\n` +
+          `Mégse = Visszaállítás AKTÍV sessionné (a jelenlegi játékok helyére)`
+        );
+
+        if (choice) {
+          if (!Array.isArray(state.archive)) state.archive = [];
+          const sessionObj = {
+            id: parsed.id || ('s_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+            name: parsed.name || '',
+            savedAt: parsed.savedAt || new Date().toISOString(),
+            startDate: parsed.startDate || (g888[0]?.date || gGg[0]?.date || getLocalDateString()),
+            endDate: parsed.endDate || (g888[g888.length-1]?.date || gGg[gGg.length-1]?.date || getLocalDateString()),
+            startBalances: parsed.startBalances || { '888': DEFAULT_BALANCE['888'], 'gg': DEFAULT_BALANCE['gg'] },
+            endBalances: parsed.endBalances || { '888': DEFAULT_BALANCE['888'], 'gg': DEFAULT_BALANCE['gg'] },
+            games: {
+              '888': g888,
+              'gg':  gGg
+            }
+          };
+          if (state.archive.some(x => x.id === sessionObj.id)) {
+            sessionObj.id = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+          }
+          state.archive.unshift(sessionObj);
+          saveState(state);
+          renderArchive();
+          showAppToast(`✅ <strong>Session hozzáadva az archívumhoz!</strong> (${totalG} verseny)`);
+        } else {
+          state.games = {
+            '888': JSON.parse(JSON.stringify(g888)),
+            'gg':  JSON.parse(JSON.stringify(gGg))
+          };
+          if (parsed.startBalances) {
+            state.baseBalances = {
+              '888': +(Number(parsed.startBalances['888']) || 0).toFixed(2),
+              'gg':  +(Number(parsed.startBalances['gg']) || 0).toFixed(2)
+            };
+          }
+          state.room = g888.length >= gGg.length ? '888' : 'gg';
+          state.view = state.room;
+          saveState(state);
+          render();
+          showAppToast(`↩️ <strong>Session visszatöltve aktívvá!</strong> (${totalG} verseny)`);
+        }
+        return;
+      }
+
+      throw new Error('A JSON fájl nem ismerhető fel sem sessionként, sem archívumként.');
+    }
+
     function renderArchive() {
       const list = document.getElementById('archive-list');
       const note = document.getElementById('archive-total-note');
@@ -2034,7 +2184,9 @@
           + '</div><div class="archive-profit" style="color:' + profitColor(profit) + ';">' + signedMoney(profit) + '</div></div>'
           + '<div class="archive-rooms">' + roomBox('gg', sgg, '🃏') + roomBox('888', s888, '🎰') + '</div>'
           + '<div class="archive-actions">'
-          + '<button class="secondary" type="button" data-archive-toggle="' + escHtml(sess.id) + '">▶ Versenyek megtekintése</button>'
+          + '<button class="secondary" type="button" data-archive-toggle="' + escHtml(sess.id) + '">▶ Versenyek</button>'
+          + '<button class="secondary" type="button" data-archive-export="' + escHtml(sess.id) + '" title="Session mentése JSON fájlba">💾 JSON mentés</button>'
+          + '<button class="secondary" type="button" data-archive-restore="' + escHtml(sess.id) + '" title="Session visszatöltése aktív munkamenetté">↩️ Visszatöltés aktívvá</button>'
           + '<button class="danger" type="button" data-archive-delete="' + escHtml(sess.id) + '">✕ Törlés</button>'
           + '</div>'
           + '<div class="archive-games-holder hidden"></div>'
@@ -2062,6 +2214,8 @@
       if (list) list.addEventListener('click', e => {
         const tgl = e.target.closest('[data-archive-toggle]');
         const del = e.target.closest('[data-archive-delete]');
+        const exp = e.target.closest('[data-archive-export]');
+        const res = e.target.closest('[data-archive-restore]');
         if (tgl) {
           const sid = tgl.getAttribute('data-archive-toggle');
           const card = tgl.closest('.archive-card');
@@ -2072,7 +2226,13 @@
             holder.innerHTML = sess ? renderArchiveGamesTable(sess) : '';
           }
           holder.classList.toggle('hidden', !opening);
-          tgl.textContent = (opening ? '▼ ' : '▶ ') + 'Versenyek megtekintése';
+          tgl.textContent = (opening ? '▼ ' : '▶ ') + 'Versenyek';
+        } else if (exp) {
+          const sid = exp.getAttribute('data-archive-export');
+          exportArchiveSession(sid);
+        } else if (res) {
+          const sid = res.getAttribute('data-archive-restore');
+          restoreArchiveSession(sid);
         } else if (del) {
           const sid = del.getAttribute('data-archive-delete');
           if (!confirm('Biztosan törlöd ezt az archivált sessiont? Ez nem vonható vissza.')) return;
@@ -2081,6 +2241,29 @@
           renderArchive();
         }
       });
+
+      const expAllBtn = document.getElementById('btn-export-all-archive');
+      if (expAllBtn) expAllBtn.addEventListener('click', exportAllArchive);
+
+      const importArchiveInput = document.getElementById('import-archive-json-input');
+      if (importArchiveInput) {
+        importArchiveInput.addEventListener('change', e => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = ev => {
+            try {
+              const parsed = JSON.parse(ev.target.result);
+              importArchiveJson(parsed);
+            } catch (err) {
+              alert('Hiba a session JSON betöltésekor: ' + err.message);
+            } finally {
+              e.target.value = '';
+            }
+          };
+          reader.readAsText(file);
+        });
+      }
     });
 
     function getLocalDateString(date=new Date()){
