@@ -322,6 +322,108 @@
       previewEl.classList.remove('hidden');
     }
 
+    // =========================================================
+    // SnG FELUGRÓ LAP (iOS, Mobil, Desktop Bottom Sheet)
+    // =========================================================
+    function openSngSheet() {
+      if (state.view !== '888' && state.view !== 'gg') return;
+      const backdrop = document.getElementById('sng-sheet-backdrop');
+      if (!backdrop) return;
+
+      const platformKey = sngGetPlatformKey();
+      const tournamentKey = sngGetTournamentKey();
+      const tournament = SNG_LOOKUP[platformKey]?.[tournamentKey];
+      if (!tournament) return;
+
+      const subEl = document.getElementById('sng-sheet-sub');
+      const roomLabel = platformKey === 'ggpoker' ? 'GGPoker' : '888poker';
+      if (subEl) subEl.textContent = `${roomLabel} · ${tournament.name}`;
+
+      const multGrid = document.getElementById('sng-sheet-multipliers');
+      if (multGrid) {
+        multGrid.innerHTML = '';
+        const multKeys = Object.keys(tournament.multipliers || {});
+        multKeys.forEach(mKey => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'sng-btn-mult';
+          btn.textContent = mKey;
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            multGrid.querySelectorAll('.sng-btn-mult').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            const mSel = document.getElementById('sng-multiplier');
+            if (mSel) {
+              mSel.value = mKey;
+              sngPopulatePositions(false);
+            }
+
+            showSngSheetPositions(platformKey, tournamentKey, mKey);
+          });
+          multGrid.appendChild(btn);
+        });
+      }
+
+      const posSec = document.getElementById('sng-sheet-pos-section');
+      if (posSec) posSec.classList.add('hidden');
+
+      backdrop.classList.remove('hidden');
+      requestAnimationFrame(() => backdrop.classList.add('open'));
+    }
+
+    function showSngSheetPositions(platformKey, tournamentKey, multiplierKey) {
+      const posSec = document.getElementById('sng-sheet-pos-section');
+      const posGrid = document.getElementById('sng-sheet-positions');
+      if (!posSec || !posGrid) return;
+
+      const tournament = SNG_LOOKUP[platformKey]?.[tournamentKey];
+      const payouts = tournament?.multipliers?.[multiplierKey];
+      if (!payouts) return;
+
+      posGrid.innerHTML = '';
+      Object.entries(payouts).forEach(([posKey, payout]) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sng-btn-pos';
+
+        const baseLabel = posKey === '1st' ? '1. hely' : posKey === '2nd' ? '2. hely' : posKey === '3rd' ? '3. hely' : posKey.replace('th',' hely');
+        const medal = payout > 0 ? (posKey === '1st' ? '🥇 ' : posKey === '2nd' ? '🥈 ' : posKey === '3rd' ? '🥉 ' : '') : '';
+        const profitVal = payout - tournament.buy_in;
+        const profitStr = profitVal > 0 ? `+$${profitVal.toFixed(2)}` : profitVal === 0 ? '±$0.00' : `${profitVal.toFixed(2)}$`;
+        const profitClass = profitVal > 0 ? 'sng-pos-profit-pos' : profitVal < 0 ? 'sng-pos-profit-neg' : 'sng-pos-profit-even';
+
+        btn.innerHTML = `
+          <span>${medal}${baseLabel} &nbsp;<span style="color:#94a3b8;font-weight:400;">($${payout.toFixed(2)})</span></span>
+          <span class="sng-pos-badge ${profitClass}">${profitStr}</span>
+        `;
+
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const pSel = document.getElementById('sng-position');
+          if (pSel) pSel.value = posKey;
+          sngUpdatePreview(platformKey, tournamentKey, multiplierKey, posKey);
+
+          closeSngSheet();
+          sngAutoSave();
+        });
+
+        posGrid.appendChild(btn);
+      });
+
+      posSec.classList.remove('hidden');
+      setTimeout(() => {
+        try { posSec.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch(e) {}
+      }, 50);
+    }
+
+    function closeSngSheet() {
+      const backdrop = document.getElementById('sng-sheet-backdrop');
+      if (!backdrop) return;
+      backdrop.classList.remove('open');
+      setTimeout(() => backdrop.classList.add('hidden'), 260);
+    }
+
     let undoableQuickEntry = null;
     let undoQuickEntryTimer = null;
 
@@ -512,19 +614,26 @@
         });
       }
 
-      // Quick panel click opens multiplier picker if idle
+      // Quick panel click opens bottom sheet
       const quickPanel = document.getElementById('sng-quick-panel');
       if (quickPanel) {
-        quickPanel.addEventListener('click', (e) => {
-          if (e.target === quickPanel || e.target.closest('.sng-panel-header') || e.target.classList.contains('sng-dropdown-row')) {
-            const mSel = document.getElementById('sng-multiplier');
-            if (mSel && !mSel.disabled) openPickerForSelect(mSel);
-          }
+        quickPanel.addEventListener('click', () => {
+          openSngSheet();
         });
       }
 
-      // Initial auto-open attempt
-      setTimeout(tryInitialPickerOpen, 120);
+      // Close button and backdrop click for SnG Sheet
+      const closeSheetBtn = document.getElementById('sng-sheet-close');
+      if (closeSheetBtn) closeSheetBtn.addEventListener('click', closeSngSheet);
+      const sheetBackdrop = document.getElementById('sng-sheet-backdrop');
+      if (sheetBackdrop) {
+        sheetBackdrop.addEventListener('click', (e) => {
+          if (e.target === sheetBackdrop) closeSngSheet();
+        });
+      }
+
+      // Initial auto-open sheet attempt on load
+      setTimeout(openSngSheet, 180);
     }
     document.addEventListener('DOMContentLoaded', () => {
       const qp = document.getElementById('quick-preset');
@@ -1624,6 +1733,9 @@
             sngPlatSel.value = roomToPlat[t] || '888poker';
           }
           sngPopulateTournaments(true);
+          openSngSheet();
+        } else {
+          closeSngSheet();
         }
       });
     });
@@ -2062,3 +2174,6 @@
     setTodayDate();
     initSngPanel();
     render();
+    if (state.view === '888' || state.view === 'gg') {
+      setTimeout(openSngSheet, 200);
+    }
