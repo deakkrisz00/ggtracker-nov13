@@ -82,8 +82,8 @@
         <h1><div class="card-icon">♠</div>Póker Tournament Tracker</h1>
         <p class="subtitle"></p>
         <div class="tabs">
-          <button class="tab tab-888" data-tab="888"><span class="dot"></span>888poker</button>
-          <button class="tab tab-gg active" data-tab="gg"><span class="dot"></span>GGPoker</button>
+          <button class="tab tab-888 active" data-tab="888"><span class="dot"></span>888poker</button>
+          <button class="tab tab-gg" data-tab="gg"><span class="dot"></span>GGPoker</button>
           <button class="tab tab-summary" data-tab="summary"><span class="dot"></span>Irányítópult</button>
           <button class="tab tab-charts" data-tab="charts"><span class="dot"></span>📈 Grafikonok</button>
           <button class="tab tab-new-charts" data-tab="new-charts"><span class="dot"></span>✨ Új grafikonok</button>
@@ -97,7 +97,7 @@
       <section class="card-section">
         <div class="card-header">
           <div>
-            <h2>Verseny rögzítése <span id="room-label" class="room-badge room-gg"><span class="room-dot"></span><span id="room-text">GGPoker</span></span></h2>
+            <h2>Verseny rögzítése <span id="room-label" class="room-badge room-888"><span class="room-dot"></span><span id="room-text">888poker</span></span></h2>
             <small></small>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -117,8 +117,8 @@
             <div class="sng-field">
               <label class="sng-label" for="sng-platform">🏠 Platform</label>
               <select id="sng-platform" class="sng-select">
+                <option value="888poker" selected>888poker</option>
                 <option value="ggpoker">GGPoker</option>
-                <option value="888poker">888poker</option>
               </select>
             </div>
             <div class="sng-field">

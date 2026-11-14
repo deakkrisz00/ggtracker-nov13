@@ -179,6 +179,8 @@
         },
       }
     };
+    SNG_LOOKUP.gg = SNG_LOOKUP.ggpoker;
+    SNG_LOOKUP['888'] = SNG_LOOKUP['888poker'];
 
     // =========================================================
     // SNG GYORS BEVITEL – Dropdown logika
@@ -187,7 +189,10 @@
 
     function sngGetPlatformKey() {
       const sel = document.getElementById('sng-platform');
-      return sel ? sel.value : 'ggpoker';
+      const val = sel ? sel.value : '';
+      if (val === 'gg' || val === 'ggpoker') return 'ggpoker';
+      if (val === '888' || val === '888poker') return '888poker';
+      return state.room === 'gg' ? 'ggpoker' : '888poker';
     }
     function sngGetTournamentKey() {
       const sel = document.getElementById('sng-tournament');
@@ -198,7 +203,15 @@
       return sel ? sel.value : '';
     }
 
-    function sngPopulateTournaments() {
+    function openPickerForSelect(sel) {
+      if (!sel || sel.disabled) return;
+      try { sel.focus(); } catch(e) {}
+      if (typeof sel.showPicker === 'function') {
+        try { sel.showPicker(); } catch(e) {}
+      }
+    }
+
+    function sngPopulateTournaments(autoOpen = true) {
       const platformKey = sngGetPlatformKey();
       const sel = document.getElementById('sng-tournament');
       if (!sel) return;
@@ -212,7 +225,12 @@
       });
       sel.disabled = false;
       // Auto-select platform default
-      const defaults = { 'ggpoker': 'sng_0.25_3max', '888poker': 'sng_0.50_3max' };
+      const defaults = {
+        'ggpoker': 'sng_0.25_3max',
+        'gg': 'sng_0.25_3max',
+        '888poker': 'sng_0.50_3max',
+        '888': 'sng_0.50_3max'
+      };
       const defaultKey = defaults[platformKey];
       if (defaultKey && sel.querySelector(`option[value="${defaultKey}"]`)) {
         sel.value = defaultKey;
@@ -224,10 +242,10 @@
       if (pSel) { pSel.innerHTML = '<option value="">– Válassz helyezést –</option>'; pSel.disabled = true; }
       sngUpdatePreview(null, null, null);
       // Auto-populate multipliers for the default selection
-      if (sel.value) sngPopulateMultipliers();
+      if (sel.value) sngPopulateMultipliers(autoOpen);
     }
 
-    function sngPopulateMultipliers() {
+    function sngPopulateMultipliers(autoOpen = true) {
       const platformKey = sngGetPlatformKey();
       const tournamentKey = sngGetTournamentKey();
       if (!tournamentKey) return;
@@ -245,16 +263,13 @@
       const pSel = document.getElementById('sng-position');
       if (pSel) { pSel.innerHTML = '<option value="">– Válassz helyezést –</option>'; pSel.disabled = true; }
       sngUpdatePreview(null, null, null);
-      // Auto-open: focus + try showPicker
-      const openPicker = () => {
-        try { sel.focus(); } catch(e) {}
-        if (typeof sel.showPicker === 'function') { try { sel.showPicker(); } catch(e) {} }
-      };
-      openPicker();
-      setTimeout(openPicker, 50);
+      if (autoOpen) {
+        openPickerForSelect(sel);
+        setTimeout(() => openPickerForSelect(sel), 60);
+      }
     }
 
-    function sngPopulatePositions() {
+    function sngPopulatePositions(autoOpen = true) {
       const platformKey = sngGetPlatformKey();
       const tournamentKey = sngGetTournamentKey();
       const multiplierKey = sngGetMultiplierKey();
@@ -282,13 +297,10 @@
         sel.appendChild(opt);
       });
       sel.disabled = false;
-      // Auto-open: focus + try showPicker
-      const openPicker = () => {
-        try { sel.focus(); } catch(e) {}
-        if (typeof sel.showPicker === 'function') { try { sel.showPicker(); } catch(e) {} }
-      };
-      openPicker();
-      setTimeout(openPicker, 50);
+      if (autoOpen) {
+        openPickerForSelect(sel);
+        setTimeout(() => openPickerForSelect(sel), 60);
+      }
     }
 
     function sngUpdatePreview(platformKey, tournamentKey, multiplierKey, positionKey) {
@@ -437,32 +449,56 @@
       }, 120);
     }
 
+    function tryInitialPickerOpen() {
+      if (state.view !== '888' && state.view !== 'gg') return;
+      const mSel = document.getElementById('sng-multiplier');
+      if (mSel && !mSel.disabled && !mSel.value) {
+        openPickerForSelect(mSel);
+      }
+    }
+
+    let initialGestureHandled = false;
+    ['pointerdown', 'touchstart', 'click'].forEach(evtName => {
+      document.addEventListener(evtName, (e) => {
+        if (initialGestureHandled) return;
+        if (e.target && (e.target.closest('.tab') || e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('label'))) {
+          initialGestureHandled = true;
+          return;
+        }
+        initialGestureHandled = true;
+        tryInitialPickerOpen();
+      }, { passive: true });
+    });
+
+    let sngPanelInitialized = false;
     function initSngPanel() {
+      if (sngPanelInitialized) return;
       const platformSel = document.getElementById('sng-platform');
+      if (!platformSel) return;
+      sngPanelInitialized = true;
       const tournamentSel = document.getElementById('sng-tournament');
       const multiplierSel = document.getElementById('sng-multiplier');
       const positionSel = document.getElementById('sng-position');
-      if (!platformSel) return;
 
       const undoBtn = document.getElementById('sng-undo-btn');
       if (undoBtn) undoBtn.addEventListener('click', undoLastQuickEntry);
 
-      // Sync platform dropdown with active room on each render
+      // Sync platform dropdown with active room on init
       const roomToPlat = { 'gg': 'ggpoker', '888': '888poker' };
-      platformSel.value = roomToPlat[state.room] || 'ggpoker';
-      sngPopulateTournaments();
+      platformSel.value = roomToPlat[state.room] || '888poker';
+      sngPopulateTournaments(false);
 
       platformSel.addEventListener('change', () => {
-        sngPopulateTournaments();
+        sngPopulateTournaments(true);
       });
       if (tournamentSel) {
         tournamentSel.addEventListener('change', () => {
-          sngPopulateMultipliers();
+          sngPopulateMultipliers(true);
         });
       }
       if (multiplierSel) {
         multiplierSel.addEventListener('change', () => {
-          sngPopulatePositions();
+          sngPopulatePositions(true);
           sngUpdatePreview(sngGetPlatformKey(), sngGetTournamentKey(), sngGetMultiplierKey(), null);
         });
       }
@@ -475,6 +511,20 @@
           setTimeout(() => sngAutoSave(), 180);
         });
       }
+
+      // Quick panel click opens multiplier picker if idle
+      const quickPanel = document.getElementById('sng-quick-panel');
+      if (quickPanel) {
+        quickPanel.addEventListener('click', (e) => {
+          if (e.target === quickPanel || e.target.closest('.sng-panel-header') || e.target.classList.contains('sng-dropdown-row')) {
+            const mSel = document.getElementById('sng-multiplier');
+            if (mSel && !mSel.disabled) openPickerForSelect(mSel);
+          }
+        });
+      }
+
+      // Initial auto-open attempt
+      setTimeout(tryInitialPickerOpen, 120);
     }
     document.addEventListener('DOMContentLoaded', () => {
       const qp = document.getElementById('quick-preset');
@@ -1488,15 +1538,11 @@
       if(isAnalysis)requestAnimationFrame(()=>renderAnalysis());
 
       updateQuickPresetOptions(state.room);
-      // Sync SNG panel platform dropdown with active room
+      // Sync SNG panel platform dropdown with active room (view update only)
       const sngPlatSel = document.getElementById('sng-platform');
       if (sngPlatSel && isRoom) {
         const roomToPlat = { 'gg': 'ggpoker', '888': '888poker' };
-        const targetPlat = roomToPlat[state.room] || 'ggpoker';
-        if (sngPlatSel.value !== targetPlat) {
-          sngPlatSel.value = targetPlat;
-          sngPopulateTournaments();
-        }
+        sngPlatSel.value = roomToPlat[state.room] || '888poker';
       }
 
       roomText.textContent=roomName;
@@ -1575,9 +1621,9 @@
           const sngPlatSel = document.getElementById('sng-platform');
           if (sngPlatSel) {
             const roomToPlat = { 'gg': 'ggpoker', '888': '888poker' };
-            sngPlatSel.value = roomToPlat[t] || 'ggpoker';
+            sngPlatSel.value = roomToPlat[t] || '888poker';
           }
-          sngPopulateTournaments();
+          sngPopulateTournaments(true);
         }
       });
     });
@@ -2014,4 +2060,5 @@
     }
     function setTodayDate(){ const d=document.getElementById('date'); if(d)d.value=getLocalDateString(); }
     setTodayDate();
+    initSngPanel();
     render();
