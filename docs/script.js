@@ -207,8 +207,9 @@
       if (!sel || sel.disabled) return;
       try { sel.focus(); } catch(e) {}
       if (typeof sel.showPicker === 'function') {
-        try { sel.showPicker(); } catch(e) {}
+        try { sel.showPicker(); return; } catch(e) {}
       }
+      try { sel.click(); } catch(e) {}
     }
 
     function sngPopulateTournaments(autoOpen = true) {
@@ -457,17 +458,42 @@
       }
     }
 
-    let initialGestureHandled = false;
-    ['pointerdown', 'touchstart', 'click'].forEach(evtName => {
-      document.addEventListener(evtName, (e) => {
-        if (initialGestureHandled) return;
-        if (e.target && (e.target.closest('.tab') || e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('label'))) {
-          initialGestureHandled = true;
-          return;
+    function handleFirstUserInteraction(e) {
+      if (state.view !== '888' && state.view !== 'gg') return;
+      const mSel = document.getElementById('sng-multiplier');
+      if (!mSel || mSel.disabled || mSel.value) return;
+
+      // Don't intercept if user tapped to navigate away to another tab
+      const tab = e.target && e.target.closest && e.target.closest('.tab');
+      if (tab) {
+        const tabName = tab.getAttribute('data-tab');
+        if (tabName !== '888' && tabName !== 'gg') return;
+      }
+
+      // Don't intercept interactive form inputs, textarea, or buttons outside sng-quick-panel
+      if (e.target && e.target.closest) {
+        if (e.target.closest('input') || e.target.closest('textarea')) return;
+        if (e.target.closest('button') && !e.target.closest('#sng-quick-panel') && !e.target.closest('.tab-888') && !e.target.closest('.tab-gg')) return;
+        if (e.target.closest('select')) return; // Native select click will open itself
+      }
+
+      // Any other tap (panel, background, cards, header, tables, active room tab):
+      openPickerForSelect(mSel);
+    }
+
+    // Active touchend and click handlers (WebKit requires active user activation)
+    document.addEventListener('touchend', handleFirstUserInteraction);
+    document.addEventListener('click', handleFirstUserInteraction);
+
+    // App focus / tab visibility change (e.g. switching back from 888 or GG app)
+    ['focus', 'visibilitychange'].forEach(evt => {
+      window.addEventListener(evt, () => {
+        if (document.visibilityState === 'visible') {
+          tryInitialPickerOpen();
+          setTimeout(tryInitialPickerOpen, 60);
+          setTimeout(tryInitialPickerOpen, 180);
         }
-        initialGestureHandled = true;
-        tryInitialPickerOpen();
-      }, { passive: true });
+      });
     });
 
     let sngPanelInitialized = false;
@@ -483,10 +509,10 @@
       const undoBtn = document.getElementById('sng-undo-btn');
       if (undoBtn) undoBtn.addEventListener('click', undoLastQuickEntry);
 
-      // Sync platform dropdown with active room on init
+      // Sync platform dropdown with active room on init and auto-populate default
       const roomToPlat = { 'gg': 'ggpoker', '888': '888poker' };
       platformSel.value = roomToPlat[state.room] || '888poker';
-      sngPopulateTournaments(false);
+      sngPopulateTournaments(true);
 
       platformSel.addEventListener('change', () => {
         sngPopulateTournaments(true);
@@ -523,8 +549,11 @@
         });
       }
 
-      // Initial auto-open attempt on load
-      setTimeout(tryInitialPickerOpen, 120);
+      // Initial auto-open attempts on load
+      tryInitialPickerOpen();
+      setTimeout(tryInitialPickerOpen, 60);
+      setTimeout(tryInitialPickerOpen, 180);
+      setTimeout(tryInitialPickerOpen, 400);
     }
     document.addEventListener('DOMContentLoaded', () => {
       const qp = document.getElementById('quick-preset');
@@ -2062,3 +2091,5 @@
     setTodayDate();
     initSngPanel();
     render();
+    tryInitialPickerOpen();
+    setTimeout(tryInitialPickerOpen, 80);
